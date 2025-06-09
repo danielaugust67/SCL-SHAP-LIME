@@ -25,7 +25,6 @@ warnings.filterwarnings('ignore')
 
 # Konfigurasi halaman Streamlit
 st.set_page_config(layout="wide", page_title="Analisis Model Prediksi Kelulusan Mahasiswa")
-st.set_option('deprecation.showPyplotGlobalUse', False) # Menonaktifkan warning untuk st.pyplot
 
 # --- Bagian Cache: Fungsi untuk memuat dan melatih model ---
 # Menggunakan cache agar proses yang berat tidak diulang setiap kali ada interaksi

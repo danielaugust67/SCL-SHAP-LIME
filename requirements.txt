@@ -7,7 +7,8 @@ scikit-learn
 xgboost
 smote
 
-torch
+torch==1.10.0
+torchvision==0.11.1
 shap
 lime
 

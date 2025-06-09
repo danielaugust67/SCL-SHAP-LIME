@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 # --- Konfigurasi Halaman Streamlit ---
 st.set_page_config(layout="wide", page_title="Dashboard Analisis Model SCL")
 
-# --- Styling CSS Kustom (Opsional) ---
+# --- Styling CSS Kustom ---
 st.markdown("""
 <style>
     /* Mengubah font */
@@ -42,36 +42,35 @@ st.markdown("""
         color: #17202A;
     }
 
-    /* ----------------------------------- */
-    /* --- STYLE BARU UNTUK SIDEBAR HITAM --- */
-    /* ----------------------------------- */
+    # ------------------------------------
+    # --- STYLE BARU UNTUK SIDEBAR HITAM ---
+    # ------------------------------------
 
-    /* Mengubah background sidebar */
+    # Mengubah background sidebar
     [data-testid="stSidebar"] {
         background-color: #111111;
     }
 
-    /* Mengubah warna judul di sidebar */
+    # Mengubah warna judul di sidebar
     [data-testid="stSidebar"] h1,
     [data-testid="stSidebar"] h2,
     [data-testid="stSidebar"] h3 {
         color: #FFFFFF;
     }
 
-    /* Mengubah warna teks biasa dan label di sidebar */
+    # Mengubah warna teks biasa dan label di sidebar
     [data-testid="stSidebar"] p,
     [data-testid="stSidebar"] label {
         color: #EAECEE;
     }
     
-    /* Mengubah warna teks caption di sidebar */
+    # Mengubah warna teks caption di sidebar
     [data-testid="stSidebar"] .st-caption {
         color: #AAB7B8;
     }
 
 </style>
 """, unsafe_allow_html=True)
-
 
 # --- Fungsi-fungsi Cache untuk Data dan Model (Tidak Berubah) ---
 @st.cache_data

@@ -31,16 +31,44 @@ st.markdown("""
     html, body, [class*="css"]  {
        font-family: 'Source Sans Pro', sans-serif;
     }
-    /* Style untuk subheader */
-    h2 {
+    /* Style untuk subheader di konten utama */
+    .main h2 {
         color: #2E86C1;
         border-bottom: 2px solid #D6EAF8;
         padding-bottom: 10px;
     }
-    /* Style untuk header di kolom utama */
-    h3 {
+    /* Style untuk header di konten utama */
+    .main h3 {
         color: #17202A;
     }
+
+    /* ----------------------------------- */
+    /* --- STYLE BARU UNTUK SIDEBAR HITAM --- */
+    /* ----------------------------------- */
+
+    /* Mengubah background sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #111111;
+    }
+
+    /* Mengubah warna judul di sidebar */
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {
+        color: #FFFFFF;
+    }
+
+    /* Mengubah warna teks biasa dan label di sidebar */
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label {
+        color: #EAECEE;
+    }
+    
+    /* Mengubah warna teks caption di sidebar */
+    [data-testid="stSidebar"] .st-caption {
+        color: #AAB7B8;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 

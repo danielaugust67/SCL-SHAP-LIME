@@ -5,3 +5,11 @@ numpy
 
 scikit-learn
 xgboost
+smote
+
+torch
+shap
+lime
+
+joblib
+matplotlib

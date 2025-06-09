@@ -3,7 +3,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 import warnings
 import torch
 import torch.nn as nn
@@ -18,50 +17,61 @@ from imblearn.combine import SMOTETomek
 import shap
 import lime
 import lime.lime_tabular
-import time
 
 # Mengabaikan warning untuk tampilan yang lebih bersih di dashboard
 warnings.filterwarnings('ignore')
 
-# Konfigurasi halaman Streamlit
-st.set_page_config(layout="wide", page_title="Analisis Model Prediksi Kelulusan Mahasiswa")
+# --- Konfigurasi Halaman Streamlit ---
+st.set_page_config(layout="wide", page_title="Dashboard Analisis Model SCL")
 
-# --- Bagian Cache: Fungsi untuk memuat dan melatih model ---
-# Menggunakan cache agar proses yang berat tidak diulang setiap kali ada interaksi
+# --- Styling CSS Kustom (Opsional, untuk estetika) ---
+st.markdown("""
+<style>
+    /* Mengubah font dan ukuran base */
+    html, body, [class*="css"]  {
+       font-family: 'Source Sans Pro', sans-serif;
+    }
+    /* Style untuk subheader */
+    h2 {
+        color: #2E86C1;
+        border-bottom: 2px solid #D6EAF8;
+        padding-bottom: 10px;
+    }
+    /* Style untuk header di kolom utama */
+    h3 {
+        color: #17202A;
+    }
+    /* Style untuk container/card */
+    .st-emotion-cache-1r6slb0 {
+        border: 1px solid #e6e6e6;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 4px 8px 0 rgba(0,0,0,0.1);
+    }
+</style>
+""", unsafe_allow_html=True)
 
+
+# --- Bagian Cache: Fungsi untuk memuat dan melatih model (Tidak diubah) ---
 @st.cache_data
 def load_and_process_data():
-    """
-    Memuat data, melakukan pra-pemrosesan, dan mengembalikan set data yang siap pakai.
-    Fungsi ini di-cache agar tidak perlu memuat ulang data setiap saat.
-    """
     df = pd.read_csv("Final_Cleaned_Student_Dataset.csv")
-    
     target_column = "Target"
     le = LabelEncoder()
     df[target_column] = le.fit_transform(df[target_column])
     class_names = le.classes_
-    
     X = df.drop(columns=[target_column])
     y = df[target_column]
-    
     X = pd.get_dummies(X)
     X_columns = X.columns.tolist()
-    
     smote = SMOTETomek(random_state=42)
     X_bal, y_bal = smote.fit_resample(X, y)
-    
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_bal)
-    
     return X_bal, y_bal, X_scaled, X_columns, class_names
 
 @st.cache_data
 def train_scl_and_get_embeddings(_X_scaled, _y_bal, best_temp=0.5, best_embed_dim=128):
-    """
-    Melatih model Supervised Contrastive Learning (SCL) dan menghasilkan embeddings.
-    Fungsi ini di-cache untuk menghindari pelatihan ulang SCL.
-    """
     class ProjectionHead(nn.Module):
         def __init__(self, input_dim, output_dim=128):
             super().__init__()
@@ -89,21 +99,15 @@ def train_scl_and_get_embeddings(_X_scaled, _y_bal, best_temp=0.5, best_embed_di
         mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-10)
         return -mean_log_prob_pos.mean()
 
-    device = torch.device("cpu") # Streamlit cloud biasanya CPU
+    device = torch.device("cpu")
     input_dim = _X_scaled.shape[1]
     scl_model = ContrastiveModel(input_dim, embed_dim=best_embed_dim).to(device)
     optimizer = torch.optim.Adam(scl_model.parameters(), lr=0.001)
-
     X_tensor = torch.tensor(_X_scaled, dtype=torch.float32)
     y_tensor = torch.tensor(_y_bal.values, dtype=torch.long)
     dataset = TensorDataset(X_tensor, y_tensor)
     loader = DataLoader(dataset, batch_size=128, shuffle=True)
-    
-    # Progress bar untuk pelatihan SCL
-    progress_bar = st.progress(0)
-    status_text = st.empty()
     num_epochs = 50
-
     scl_model.train()
     for epoch in range(num_epochs):
         for batch_x, batch_y in loader:
@@ -113,188 +117,157 @@ def train_scl_and_get_embeddings(_X_scaled, _y_bal, best_temp=0.5, best_embed_di
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        
-        progress = (epoch + 1) / num_epochs
-        progress_bar.progress(progress)
-        status_text.text(f"Melatih Model SCL... Epoch {epoch+1}/{num_epochs}")
-
     scl_model.eval()
     with torch.no_grad():
         embeddings = scl_model(X_tensor.to(device)).cpu().numpy()
-    
-    status_text.text("Pelatihan SCL selesai!")
-    progress_bar.empty()
-
     return embeddings
 
 @st.cache_resource
 def train_classifier(X_train, y_train):
-    """Melatih dan mengembalikan model VotingClassifier."""
     rf = RandomForestClassifier(random_state=42)
     xgb = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
     model = VotingClassifier(estimators=[('rf', rf), ('xgb', xgb)], voting='soft')
     model.fit(X_train, y_train)
     return model
 
+
 # --- Judul Utama Dashboard ---
-st.title("📊 Dashboard Analisis & Interpretasi Model Prediksi Kelulusan Mahasiswa")
-st.write("""
-Aplikasi ini membandingkan dua pendekatan model machine learning untuk memprediksi status kelulusan mahasiswa:
-1.  **Model A (Baseline)**: Menggunakan fitur asli mahasiswa.
-2.  **Model B (Proposed)**: Menggunakan *embeddings* yang dihasilkan oleh *Supervised Contrastive Learning* (SCL).
-Jelajahi berbagai tab di sidebar untuk melihat perbandingan performa, interpretasi global (SHAP), interpretasi lokal (LIME), dan analisis makna dari *embeddings*.
-""")
+st.title("🔬 Dashboard Analisis & Interpretasi Model Prediksi Kelulusan")
+st.markdown("Sebuah dasbor interaktif untuk membedah dan membandingkan performa model machine learning dengan dan tanpa *Supervised Contrastive Learning* (SCL).")
+st.divider()
 
 # --- Memuat Data dan Melatih Model (dengan Spinner) ---
-with st.spinner("Langkah 1/3: Memuat dan memproses data... Ini mungkin memakan waktu beberapa saat."):
+with st.spinner("Mempersiapkan data dan melatih model... Proses ini hanya berjalan sekali."):
     X_bal, y_bal, X_scaled, X_columns, class_names = load_and_process_data()
-
-with st.spinner("Langkah 2/3: Melatih model SCL untuk menghasilkan embeddings... Ini adalah proses yang paling lama pada pemuatan pertama."):
     embeddings = train_scl_and_get_embeddings(X_scaled, y_bal)
     embedding_feature_names = [f'Emb_{i}' for i in range(embeddings.shape[1])]
-
-# Membagi data setelah semua diproses
-X_train_orig, X_test_orig, y_train, y_test, emb_train, emb_test = train_test_split(
-    X_scaled, y_bal, embeddings, test_size=0.25, stratify=y_bal, random_state=42
-)
-X_train_df = pd.DataFrame(X_train_orig, columns=X_columns)
-
-with st.spinner("Langkah 3/3: Melatih model klasifikasi A dan B..."):
+    
+    X_train_orig, X_test_orig, y_train, y_test, emb_train, emb_test = train_test_split(
+        X_scaled, y_bal, embeddings, test_size=0.25, stratify=y_bal, random_state=42
+    )
+    X_train_df_orig = pd.DataFrame(X_train_orig, columns=X_columns)
+    emb_train_df = pd.DataFrame(emb_train, columns=embedding_feature_names)
+    
     model_A = train_classifier(X_train_orig, y_train)
     model_B = train_classifier(emb_train, y_train)
 
-st.success("Semua data dan model berhasil dimuat! Silakan pilih analisis dari sidebar.")
-st.markdown("---")
+# --- Navigasi Menggunakan Tab ---
+tab1, tab2 = st.tabs(["📊 Ringkasan & Performa Model", "🔍 Analisis Keterpenjelasan (SHAP & LIME)"])
 
-
-# --- Sidebar untuk Navigasi ---
-st.sidebar.title("Navigasi Analisis")
-analysis_choice = st.sidebar.radio(
-    "Pilih Halaman:",
-    ("Ringkasan & Performa Model", "Analisis Global (SHAP)", "Analisis Lokal (LIME)", "Analisis Semantik Embedding")
-)
-
-
-# --- Tampilan Berdasarkan Pilihan di Sidebar ---
-
-if analysis_choice == "Ringkasan & Performa Model":
-    st.header("Ringkasan & Performa Model")
-    st.write("Perbandingan laporan klasifikasi antara Model A (tanpa SCL) dan Model B (dengan SCL) pada data tes.")
-
+# --- Isi Tab 1: Performa Model ---
+with tab1:
+    st.header("Perbandingan Performa Model")
+    st.write("Laporan klasifikasi lengkap untuk Model A (Baseline) dan Model B (SCL) pada data tes. Metrik seperti *precision*, *recall*, dan *f1-score* menunjukkan kemampuan model pada setiap kelas.")
+    
     col1, col2 = st.columns(2)
-
     with col1:
         st.subheader("Model A (Baseline - Tanpa SCL)")
         y_pred_A = model_A.predict(X_test_orig)
         report_A = classification_report(y_test, y_pred_A, target_names=class_names, output_dict=True)
-        st.dataframe(pd.DataFrame(report_A).transpose())
+        st.dataframe(pd.DataFrame(report_A).transpose(), use_container_width=True)
 
     with col2:
         st.subheader("Model B (Proposed - Dengan SCL)")
         y_pred_B = model_B.predict(emb_test)
         report_B = classification_report(y_test, y_pred_B, target_names=class_names, output_dict=True)
-        st.dataframe(pd.DataFrame(report_B).transpose())
+        st.dataframe(pd.DataFrame(report_B).transpose(), use_container_width=True)
+    
+    st.info("""
+    **Kesimpulan Awal:** Perhatikan perbedaan skor F1 (rata-rata terbobot) antara kedua model. Model dengan SCL (Model B) diharapkan menunjukkan peningkatan karena kemampuannya mempelajari representasi data yang lebih baik.
+    """)
 
-elif analysis_choice == "Analisis Global (SHAP)":
-    st.header("Analisis Keterpenjelasan Global dengan SHAP")
-    st.write("SHAP (SHapley Additive exPlanations) menunjukkan kontribusi rata-rata dari setiap fitur/embedding terhadap prediksi model secara keseluruhan. Plot di bawah ini adalah *bar plot* yang merangkum *mean absolute SHAP value*.")
+# --- Isi Tab 2: Analisis Keterpenjelasan ---
+with tab2:
+    # --- Layout Utama Tab 2 ---
+    main_col, inspector_col = st.columns([2, 1], gap="large")
 
-    col1, col2 = st.columns(2)
+    # --- Kolom Kanan: Kamus Embedding Interaktif ---
+    with inspector_col:
+        st.subheader("📖 Kamus Embedding")
+        st.markdown("Gunakan panel ini untuk memahami makna dari setiap *embedding* yang dihasilkan oleh Model B. Pilih embedding untuk melihat fitur-fitur asli yang paling berpengaruh terhadapnya.")
+        
+        # Widget untuk memilih embedding
+        selected_embedding = st.selectbox(
+            "Pilih Embedding untuk dianalisis:",
+            options=embedding_feature_names,
+            index=86, # Default ke Emb_86
+            help="Pilih embedding yang ingin Anda ketahui maknanya, misalnya yang paling berpengaruh di plot SHAP."
+        )
 
-    with col1:
+        if selected_embedding:
+            correlation_series = X_train_df_orig.corrwith(emb_train_df[selected_embedding])
+            top_correlated_features = correlation_series.abs().sort_values(ascending=False).head(10)
+            plot_data = correlation_series.loc[top_correlated_features.index].sort_values()
+
+            st.markdown(f"**Fitur Teratas yang Berkolerasi dengan `{selected_embedding}`**")
+            st.bar_chart(plot_data)
+            st.caption("Korelasi positif (biru) berarti searah, korelasi negatif (merah) berarti berlawanan arah.")
+            st.dataframe(plot_data.rename("Nilai Korelasi").to_frame(), use_container_width=True)
+
+    # --- Kolom Kiri: Penjelasan SHAP & LIME ---
+    with main_col:
+        st.header("Analisis Keterpenjelasan Global (SHAP)")
+        st.markdown("SHAP (SHapley Additive exPlanations) menunjukkan fitur mana yang paling berdampak pada prediksi model secara keseluruhan. Semakin panjang bar, semakin besar pengaruhnya.")
+
+        # SHAP Model A
         st.subheader("Model A (Baseline - Fitur Asli)")
         with st.spinner("Menghitung SHAP values untuk Model A..."):
             explainer_A = shap.KernelExplainer(model_A.predict_proba, X_train_orig[:50])
             shap_values_A = explainer_A.shap_values(X_test_orig[:25])
-            fig_A, ax_A = plt.subplots()
+            fig_A, _ = plt.subplots(figsize=(10, 8))
             shap.summary_plot(shap_values_A, X_test_orig[:25], plot_type='bar', feature_names=X_columns, show=False)
+            plt.title("Kontribusi Fitur Global - Model A")
+            plt.tight_layout()
             st.pyplot(fig_A)
+        
+        st.divider()
 
-    with col2:
-        st.subheader("Model B (Proposed - Fitur Embedding)")
+        # SHAP Model B
+        st.subheader("Model B (Proposed - Embedding SCL)")
+        st.markdown("👈 **Gunakan Kamus Embedding di sebelah kanan untuk mencari tahu arti dari embedding yang paling berpengaruh di plot ini!**")
         with st.spinner("Menghitung SHAP values untuk Model B..."):
             explainer_B = shap.KernelExplainer(model_B.predict_proba, emb_train[:50])
             shap_values_B = explainer_B.shap_values(emb_test[:25])
-            fig_B, ax_B = plt.subplots()
+            fig_B, _ = plt.subplots(figsize=(10, 8))
             shap.summary_plot(shap_values_B, emb_test[:25], plot_type='bar', feature_names=embedding_feature_names, show=False)
+            plt.title("Kontribusi Embedding Global - Model B")
+            plt.tight_layout()
             st.pyplot(fig_B)
 
+        st.divider()
 
-elif analysis_choice == "Analisis Lokal (LIME)":
-    st.header("Analisis Keterpenjelasan Lokal dengan LIME")
-    st.write("LIME (Local Interpretable Model-agnostic Explanations) menjelaskan prediksi untuk satu sampel data (satu mahasiswa). Pilih indeks mahasiswa dari data tes untuk dianalisis.")
+        st.header("Analisis Keterpenjelasan Lokal (LIME)")
+        st.markdown("LIME (Local Interpretable Model-agnostic Explanations) menjelaskan mengapa model membuat prediksi tertentu untuk **satu mahasiswa spesifik**.")
+        
+        instance_idx = st.slider("Pilih Indeks Mahasiswa dari Test Set:", 0, len(X_test_orig) - 1, 0,
+                                 help="Geser untuk memilih mahasiswa yang berbeda dan lihat bagaimana penjelasan model berubah.")
+        
+        instance_A = X_test_orig[instance_idx]
+        instance_B = emb_test[instance_idx]
+        true_label = class_names[y_test.iloc[instance_idx]]
+        pred_A = class_names[model_A.predict(instance_A.reshape(1, -1))[0]]
+        pred_B = class_names[model_B.predict(instance_B.reshape(1, -1))[0]]
 
-    instance_idx = st.slider("Pilih Indeks Mahasiswa dari Test Set:", 0, len(X_test_orig) - 1, 0)
-    
-    instance_A = X_test_orig[instance_idx]
-    instance_B = emb_test[instance_idx]
-    true_label = class_names[y_test.iloc[instance_idx]]
-    pred_A = class_names[model_A.predict(instance_A.reshape(1, -1))[0]]
-    pred_B = class_names[model_B.predict(instance_B.reshape(1, -1))[0]]
-
-    st.markdown(f"**Menganalisis Mahasiswa ke-{instance_idx}**")
-    st.write(f"- Label Asli: **{true_label}**")
-    st.write(f"- Prediksi Model A: **{pred_A}**")
-    st.write(f"- Prediksi Model B: **{pred_B}**")
-    st.markdown("---")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
+        st.markdown(f"#### Menganalisis Mahasiswa ke-{instance_idx}")
+        info_col1, info_col2, info_col3 = st.columns(3)
+        info_col1.metric("Label Asli", true_label)
+        info_col2.metric("Prediksi Model A", pred_A)
+        info_col3.metric("Prediksi Model B", pred_B)
+        
+        # LIME Model A
         st.subheader("Penjelasan LIME untuk Model A")
         with st.spinner("Membuat penjelasan LIME untuk Model A..."):
             explainer_lime_A = lime.lime_tabular.LimeTabularExplainer(
                 training_data=X_train_orig, mode='classification', feature_names=X_columns, class_names=class_names, verbose=False
             )
             explanation_A = explainer_lime_A.explain_instance(instance_A, model_A.predict_proba, num_features=10, top_labels=3)
-            st.components.v1.html(explanation_A.as_html(), height=800)
-    
-    with col2:
+            st.components.v1.html(explanation_A.as_html(), height=400)
+            
+        # LIME Model B
         st.subheader("Penjelasan LIME untuk Model B")
         with st.spinner("Membuat penjelasan LIME untuk Model B..."):
              explainer_lime_B = lime.lime_tabular.LimeTabularExplainer(
                 training_data=emb_train, mode='classification', feature_names=embedding_feature_names, class_names=class_names, verbose=False
             )
              explanation_B = explainer_lime_B.explain_instance(instance_B, model_B.predict_proba, num_features=10, top_labels=3)
-             st.components.v1.html(explanation_B.as_html(), height=800)
-
-elif analysis_choice == "Analisis Semantik Embedding":
-    st.header("Analisis Semantik: Mencari Makna di Balik Embedding Penting")
-    st.write("""
-    Model B tidak menggunakan fitur asli secara langsung, melainkan *embedding* hasil SCL.
-    Untuk memahami apa yang direpresentasikan oleh sebuah embedding, kita bisa mencari fitur-fitur asli mana yang paling kuat korelasinya dengan embedding tersebut.
-    Gunakan menu di bawah untuk memilih embedding yang ingin dianalisis (misalnya, yang paling penting menurut plot SHAP).
-    """)
-
-    # Membuat DataFrame dari data training untuk korelasi
-    emb_train_df = pd.DataFrame(emb_train, columns=embedding_feature_names)
-
-    # Widget untuk memilih embedding
-    important_embedding_name = st.selectbox(
-        "Pilih Embedding untuk dianalisis:",
-        options=embedding_feature_names,
-        index=86 # Default ke Emb_86 seperti di skrip asli
-    )
-
-    if important_embedding_name:
-        # Hitung korelasi antara embedding yang dipilih dengan semua fitur asli
-        correlation_series = X_train_df.corrwith(emb_train_df[important_embedding_name])
-        
-        # Urutkan berdasarkan nilai korelasi absolut (paling kuat)
-        top_correlated_features = correlation_series.abs().sort_values(ascending=False).head(10)
-        
-        st.subheader(f"Top 10 Fitur Asli yang Paling Berkolerasi dengan {important_embedding_name}")
-        
-        # Tampilkan dalam bentuk tabel dan plot
-        col1, col2 = st.columns([1, 2])
-
-        with col1:
-             st.write("Tabel Korelasi:")
-             st.dataframe(top_correlated_features.rename("Korelasi Absolut"))
-
-        with col2:
-            st.write("Visualisasi Korelasi:")
-            # Ambil nilai korelasi asli (bukan absolut) untuk plot
-            plot_data = correlation_series.loc[top_correlated_features.index].sort_values()
-            st.bar_chart(plot_data)
-            st.caption("Batang positif berarti korelasi positif (searah), batang negatif berarti korelasi negatif (berlawanan arah).")
+             st.components.v1.html(explanation_B.as_html(), height=400)

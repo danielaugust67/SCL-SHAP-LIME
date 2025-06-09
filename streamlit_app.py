@@ -1,131 +1,123 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import joblib
 import shap
-import lime
-import lime.lime_tabular
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
-from xgboost import XGBClassifier
-from imblearn.combine import SMOTETomek
-from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
 
-# --- Bagian 0: Setup dan Import Library ---
-st.title('Machine Learning Dashboard')
-st.write("Dashboard ini menampilkan model machine learning dengan dan tanpa penggunaan SCL.")
+# --- FUNGSI UNTUK MEMUAT ASET (HANYA DIJALANKAN SEKALI) ---
+@st.cache_resource
+def load_all_assets():
+    """
+    Memuat semua model, data, dan objek yang telah disimpan dari folder aset.
+    Decorator @st.cache_resource memastikan ini hanya berjalan sekali.
+    """
+    asset_path = "streamlit_dashboard_assets"
+    assets = {}
 
-# --- Bagian 1: Memuat dan Memproses Data ---
-@st.cache
-def load_and_process_data():
-    # Simulasi pembacaan data
-    df = pd.read_csv("Final_Cleaned_Student_Dataset.csv")
-    target_column = "Target"
-    le = LabelEncoder()
-    df[target_column] = le.fit_transform(df[target_column])
-    class_names = le.classes_
+    # Memuat model
+    assets['model_A'] = joblib.load(f"{asset_path}/model_A_without_SCL.pkl")
+    assets['model_B'] = joblib.load(f"{asset_path}/model_B_with_SCL.pkl")
 
-    X = df.drop(columns=[target_column])
-    y = df[target_column]
+    # Memuat pre-processor dan nama
+    assets['le'] = joblib.load(f"{asset_path}/label_encoder.pkl")
+    assets['scaler'] = joblib.load(f"{asset_path}/standard_scaler.pkl")
+    assets['class_names'] = joblib.load(f"{asset_path}/class_names.pkl")
+    assets['feature_names_A'] = joblib.load(f"{asset_path}/feature_names_A.pkl")
+    assets['feature_names_B'] = joblib.load(f"{asset_path}/feature_names_B.pkl")
 
-    smote = SMOTETomek(random_state=42)
-    X_bal, y_bal = smote.fit_resample(X, y)
+    # Memuat hasil klasifikasi
+    assets['report_A'] = pd.read_csv(f"{asset_path}/classification_report_A.csv", index_col=0)
+    assets['report_B'] = pd.read_csv(f"{asset_path}/classification_report_B.csv", index_col=0)
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_bal)
+    # Memuat data & nilai SHAP
+    assets['shap_values_A'] = joblib.load(f"{asset_path}/shap_values_A.pkl")
+    assets['shap_data_A'] = pd.read_csv(f"{asset_path}/shap_data_A.csv")
+    assets['shap_values_B'] = joblib.load(f"{asset_path}/shap_values_B.pkl")
+    assets['shap_data_B'] = pd.read_csv(f"{asset_path}/shap_data_B.csv")
 
-    return X_scaled, y_bal, X.columns.tolist(), class_names
+    # Memuat penjelasan LIME
+    assets['lime_explanation_A'] = joblib.load(f"{asset_path}/lime_explanation_A.pkl")
+    assets['lime_explanation_B'] = joblib.load(f"{asset_path}/lime_explanation_B.pkl")
 
-# --- Bagian 2: Menampilkan Sidebar dan Kamus Embedding ---
-# Menyimpan embedding dalam session_state agar tidak dihitung ulang
-if 'embedding_values' not in st.session_state:
-    st.session_state.embedding_values = np.random.rand(100, 10)  # Contoh embedding
+    # Memuat analisis semantik
+    assets['correlation_df'] = pd.read_csv(f"{asset_path}/embedding_semantic_correlation.csv", index_col=0)
 
-# Sidebar untuk update embedding
-st.sidebar.subheader('Kamus Embedding')
-embedding_idx = st.sidebar.slider('Pilih embedding index', 0, 9, 5)  # Pilih embedding index antara 0 dan 9
-embedding_values = st.session_state.embedding_values[:, embedding_idx]
+    return assets
 
-# Tampilkan nilai embedding yang dipilih di sidebar
-st.sidebar.write(f"Embedding pada index {embedding_idx}:")
-st.sidebar.dataframe(pd.DataFrame(embedding_values))
+# --- MEMBANGUN UI STREAMLIT ---
 
-# --- Bagian 3: Model Tanpa SCL (Tanpa Contrastive Learning) ---
-@st.cache
-def train_model_without_cl(X_scaled, y_bal):
-    rf_A = RandomForestClassifier(random_state=42)
-    xgb_A = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
-    model_A = VotingClassifier(estimators=[('rf', rf_A), ('xgb', xgb_A)], voting='soft')
-    model_A.fit(X_scaled, y_bal)
-    return model_A
+st.set_page_config(layout="wide")
 
-model_A = train_model_without_cl(load_and_process_data()[0], load_and_process_data()[1])
+# Muat semua aset
+try:
+    assets = load_all_assets()
+except FileNotFoundError:
+    st.error("Folder 'streamlit_dashboard_assets' tidak ditemukan. Pastikan folder tersebut berada di direktori yang sama dengan file app.py Anda.")
+    st.stop()
 
-# Hasil Klasifikasi Model A (Tanpa CL)
-@st.cache
-def evaluate_model_without_cl(model, X_scaled, y_bal):
-    y_pred_A = model.predict(X_scaled)
-    return classification_report(y_bal, y_pred_A)
 
-st.subheader("Evaluasi Model Tanpa CL")
-st.text(evaluate_model_without_cl(model_A, load_and_process_data()[0], load_and_process_data()[1]))
+# --- SIDEBAR UNTUK KAMUS EMBEDDING ---
+st.sidebar.title("📖 Kamus Makna Embedding")
+st.sidebar.info(
+    "Sidebar ini menunjukkan fitur-fitur asli yang paling kuat berkorelasi "
+    "dengan embedding yang dianggap penting oleh model. Ini membantu kita memahami "
+    "makna dari setiap dimensi embedding."
+)
+st.sidebar.header(f"Makna dari {assets['correlation_df'].columns[0]}")
+st.sidebar.dataframe(assets['correlation_df'])
 
-# --- Bagian 4: Model Dengan SCL (Dengan Contrastive Learning) ---
-@st.cache
-def train_model_with_cl(embeddings, y_bal):
-    rf_B = RandomForestClassifier(random_state=42)
-    xgb_B = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
-    model_B = VotingClassifier(estimators=[('rf', rf_B), ('xgb', xgb_B)], voting='soft')
-    model_B.fit(embeddings, y_bal)
-    return model_B
 
-# Menggunakan embeddings yang sudah dipilih untuk training
-embeddings = st.session_state.embedding_values
-model_B = train_model_with_cl(embeddings, load_and_process_data()[1])
+# --- KONTEN UTAMA ---
+st.title("Dashboard Perbandingan Model Prediksi Status Mahasiswa")
+st.success("Semua aset model berhasil dimuat! Gunakan sidebar untuk melihat makna embedding.")
 
-# Hasil Klasifikasi Model B (Dengan CL)
-@st.cache
-def evaluate_model_with_cl(model, embeddings, y_bal):
-    y_pred_B = model.predict(embeddings)
-    return classification_report(y_bal, y_pred_B)
 
-st.subheader("Evaluasi Model Dengan CL")
-st.text(evaluate_model_with_cl(model_B, embeddings, load_and_process_data()[1]))
+# Tampilkan hasil dalam tab agar rapi
+tab1, tab2, tab3 = st.tabs([
+    "📊 Laporan Klasifikasi",
+    "🌍 Analisis Global (SHAP)",
+    "📍 Analisis Lokal (LIME)"
+])
 
-# --- Bagian 5: SHAP (Analisis Interpretability Global) ---
-@st.cache
-def shap_analysis(model, X):
-    explainer_A = shap.KernelExplainer(model.predict_proba, X[:100])
-    shap_values_A = explainer_A.shap_values(X[:50])
-    return shap_values_A
+with tab1:
+    st.header("Perbandingan Laporan Klasifikasi")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Model A (Baseline Tanpa SCL)")
+        st.dataframe(assets['report_A'])
+    with col2:
+        st.subheader("Model B (Proposed Dengan SCL)")
+        st.dataframe(assets['report_B'])
 
-# Menampilkan SHAP Bar Plot
-shap_values_A = shap_analysis(model_A, load_and_process_data()[0])
-st.subheader("SHAP Bar Plot untuk Model Tanpa CL")
-shap.summary_plot(shap_values_A, load_and_process_data()[0][:50], plot_type='bar', feature_names=load_and_process_data()[2])
+with tab2:
+    st.header("Analisis Kepentingan Fitur Global (SHAP)")
+    st.set_option('deprecation.showPyplotGlobalUse', False) # Menonaktifkan warning
 
-# --- Bagian 6: LIME (Analisis Interpretability Lokal) ---
-@st.cache
-def lime_analysis(model, X, instance_idx=0):
-    explainer_lime_A = lime.lime_tabular.LimeTabularExplainer(
-        training_data=X,
-        mode='classification',
-        feature_names=load_and_process_data()[2],
-        class_names=load_and_process_data()[3],
-        verbose=False
-    )
-    explanation_A = explainer_lime_A.explain_instance(X[instance_idx], model.predict_proba, num_features=10)
-    return explanation_A
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Model A (Fitur Asli)")
+        fig_A, ax_A = plt.subplots(figsize=(10, 8))
+        shap.summary_plot(assets['shap_values_A'], assets['shap_data_A'], plot_type='bar', feature_names=assets['feature_names_A'], show=False)
+        st.pyplot(fig_A)
 
-lime_explanation_A = lime_analysis(model_A, load_and_process_data()[0])
-lime_explanation_A.show_in_notebook(show_table=True, show_all=False)
+    with col2:
+        st.subheader("Model B (Fitur Embedding)")
+        fig_B, ax_B = plt.subplots(figsize=(10, 8))
+        shap.summary_plot(assets['shap_values_B'], assets['shap_data_B'], plot_type='bar', feature_names=assets['feature_names_B'], show=False)
+        st.pyplot(fig_B)
 
-# --- Bagian 7: Menampilkan Progress Bar ---
-st.write("Proses pelatihan model...")
 
-# Simulasi progress bar
-progress_bar = st.progress(0)
-for i in range(100):
-    time.sleep(0.1)
-    progress_bar.progress(i + 1)
+with tab3:
+    st.header("Analisis Prediksi Lokal untuk Satu Sampel (LIME)")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Penjelasan Model A")
+        st.write("Fitur-fitur yang mendukung/menentang prediksi:")
+        lime_df_A = pd.DataFrame(assets['lime_explanation_A'], columns=['Fitur', 'Kontribusi'])
+        st.dataframe(lime_df_A)
 
-st.success('Pelatihan selesai!')
+    with col2:
+        st.subheader("Penjelasan Model B")
+        st.write("Embedding yang mendukung/menentang prediksi:")
+        lime_df_B = pd.DataFrame(assets['lime_explanation_B'], columns=['Embedding', 'Kontribusi'])
+        st.dataframe(lime_df_B)

@@ -8,4 +8,4 @@ imbalanced-learn==0.9.1
 torch==1.13.1
 shap==0.39.0
 lime==0.2.0.1
-streamlit==1.16.0
+streamlit
